@@ -608,7 +608,7 @@
                 <tr>
                   <td class="name-cell">${escHtml(item.name)}<span class="kind-tag">${escHtml(item.kind || '')}</span></td>
                   <td class="oid-cell">${item.oidResolved ? escHtml(formatOidDot(item.oidResolved)) : `<span class="oid unresolved">${escHtml(formatOidDot(item.oidRaw))}<span class="oid-raw">(부모 OID 미확인)</span></span>`}</td>
-                  <td class="file-cell">${escHtml(item.fileName || '')}${item.moduleName ? ' / ' + escHtml(item.moduleName) : ''}</td>
+                  <td class="file-cell">${fileCellHtml(item.fileName || '')}${item.moduleName ? ' / ' + escHtml(item.moduleName) : ''}</td>
                   <td class="syntax-cell">${escHtml(item.syntax || '')}</td>
                   <td class="fav-cell"><button type="button" class="fav-remove-btn" data-key="${escHtml(item.key)}" title="즐겨찾기에서 제거">✕</button></td>
                 </tr>
@@ -862,6 +862,21 @@
 
   function escHtml(s){
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // .txt로 끝나는 MIB 파일명을 Broadcom techdocs 문서 링크로 변환
+  function mibDocLink(fileName){
+    if (!fileName || !/\.txt$/i.test(fileName)) return null;
+    const base = fileName.replace(/\.txt$/i, '').toLowerCase();
+    return `https://techdocs.broadcom.com/us/en/symantec-security-software/web-and-network-security/edge-swg/7-4/introduction/chapter-2-symantec-network-protection-private-mib-files/${base}.html`;
+  }
+
+  function fileCellHtml(fileName){
+    if (!fileName) return '';
+    const url = mibDocLink(fileName);
+    return url
+      ? `<a href="${escHtml(url)}" target="_blank" rel="noopener noreferrer">${escHtml(fileName)}</a>`
+      : escHtml(fileName);
   }
 
   // ---------- drag & drop (동일 패턴) ----------
@@ -1342,7 +1357,7 @@
       <tr>
         <td class="fav-cell"><button type="button" class="fav-btn ${isFavorite(e) ? 'active' : ''}" data-idx="${i}" title="즐겨찾기">${isFavorite(e) ? '★' : '☆'}</button></td>
         ${hasDeviceCol ? `<td>${e.device ? `<span class="device-badge device-${escHtml(e.deviceCode||'other')}">${escHtml(e.device)}</span>` : ''}</td>` : ''}
-        <td class="file-cell">${escHtml(e.fileName)}</td>
+        <td class="file-cell">${fileCellHtml(e.fileName)}</td>
         <td class="name-cell">${escHtml(e.name)}<span class="kind-tag">${escHtml(e.kind)}</span></td>
         <td class="oid-cell">${oidHtml(e)}</td>
         <td class="syntax-cell">${escHtml(e.syntax)}</td>
