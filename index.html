@@ -124,18 +124,6 @@
   .upload-panel-body #exportBtn { margin: 0; padding: 6px 8px; font-size: 11px; width: 100%; box-sizing: border-box; }
   .upload-panel-body #uploadRepoBtn { margin: 0; padding: 6px 8px; font-size: 11px; width: 100%; box-sizing: border-box; }
   .upload-panel-body #uploadRepoBtn:disabled { background: #cbd5e1; cursor: not-allowed; }
-  .reset-token-btn {
-    background: transparent;
-    border: 1px solid #cbd5e1;
-    color: #6b7280;
-    font-size: 10.5px;
-    padding: 4px 6px;
-    border-radius: 6px;
-    cursor: pointer;
-    width: 100%;
-    box-sizing: border-box;
-  }
-  .reset-token-btn:hover { background: #f3f4f6; }
 
   #fileMeta {
     text-align: left;
@@ -429,7 +417,6 @@
       <div id="dropZone">⬆️ zip 드래그</div>
       <button id="exportBtn" disabled>💾 CSV</button>
       <button id="uploadRepoBtn" disabled title="이 파일을 저장소(/files)에 업로드">📤 저장소 업로드</button>
-      <button id="resetTokenBtn" class="reset-token-btn" title="저장된 GitHub 토큰 재설정">🔑 토큰 재설정</button>
     </div>
   </div>
 
@@ -771,7 +758,6 @@
   const fileLog = document.getElementById('fileLog');
   const exportBtn = document.getElementById('exportBtn');
   const uploadRepoBtn = document.getElementById('uploadRepoBtn');
-  const resetTokenBtn = document.getElementById('resetTokenBtn');
   const report = document.getElementById('report');
   const repoFileList = document.getElementById('repoFileList');
   const repoRefreshBtn = document.getElementById('repoRefreshBtn');
@@ -782,12 +768,14 @@
   let currentZipFile = null;
   let currentZipSource = null; // 'manual' | 'repo'
 
-  // GitHub Personal Access Token은 이 브라우저의 localStorage에만 저장되며,
-  // 서버나 다른 사용자에게 전송/공유되지 않습니다.
-  const GH_TOKEN_KEY = 'mibExplorerGithubToken';
+  // ⚠️ 보안 주의: 이 페이지는 정적 클라이언트 코드이므로, 아래 토큰은
+  // 페이지 소스를 보는 "누구에게나" 그대로 노출됩니다(이 저장소를 볼 수 있는 사람 전부).
+  // 반드시 "이 저장소 하나에만 Contents: Read/Write" 권한만 가진 Fine-grained PAT를 사용하고,
+  // 유출 시 즉시 GitHub 설정에서 재발급/폐기(revoke)하세요.
+  const GITHUB_TOKEN = 'ghp_여기에_본인의_토큰을_붙여넣으세요';
 
-  function ghHeaders(token){
-    return { 'Accept': 'application/vnd.github+json', 'Authorization': `token ${token}` };
+  function ghHeaders(){
+    return { 'Accept': 'application/vnd.github+json', 'Authorization': `token ${GITHUB_TOKEN}` };
   }
 
   function arrayBufferToBase64(buffer){
@@ -1135,6 +1123,10 @@
       alert('업로드할 파일이 없습니다. zip 파일을 먼저 선택하거나 드래그해주세요.');
       return;
     }
+    if (!GITHUB_TOKEN || GITHUB_TOKEN.includes('여기에')){
+      alert('코드 안의 GITHUB_TOKEN 값이 아직 설정되지 않았습니다. 본인의 Personal Access Token으로 채워주세요.');
+      return;
+    }
     if (!REPO_OWNER){
       alert('저장소 정보를 확인할 수 없습니다.');
       return;
@@ -1147,15 +1139,6 @@
         alert('저장소(/files) 위치를 확인할 수 없습니다. 저장소 목록을 새로고침한 뒤 다시 시도해주세요.');
         return;
       }
-    }
-
-    let token = localStorage.getItem(GH_TOKEN_KEY);
-    if (!token){
-      token = window.prompt('GitHub Personal Access Token을 입력하세요 (해당 저장소에 대한 쓰기 권한 필요).\n이 토큰은 이 브라우저에만 저장되며, 서버나 다른 사용자에게 전송/공유되지 않습니다.');
-      if (!token) return;
-      token = token.trim();
-      if (!token) return;
-      localStorage.setItem(GH_TOKEN_KEY, token);
     }
 
     const file = currentZipFile;
@@ -1173,7 +1156,7 @@
       // 이미 존재하는 파일이면 sha가 있어야 덮어쓰기가 가능함
       let sha;
       try{
-        const existing = await fetch(apiUrl, { headers: ghHeaders(token) });
+        const existing = await fetch(apiUrl, { headers: ghHeaders() });
         if (existing.ok){
           const info = await existing.json();
           sha = info.sha;
@@ -1185,7 +1168,7 @@
 
       const res = await fetch(apiUrl, {
         method: 'PUT',
-        headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+        headers: { ...ghHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: `Upload ${file.name} via MIB Explorer`,
           content: base64,
@@ -1196,8 +1179,7 @@
       if (!res.ok){
         const errData = await res.json().catch(() => ({}));
         if (res.status === 401){
-          localStorage.removeItem(GH_TOKEN_KEY);
-          throw new Error('인증 실패: 토큰이 유효하지 않습니다. 토큰을 다시 입력해주세요.');
+          throw new Error('인증 실패: GITHUB_TOKEN 값이 유효하지 않습니다. 토큰을 다시 확인해주세요.');
         }
         throw new Error(errData.message || `HTTP ${res.status}`);
       }
@@ -1214,10 +1196,6 @@
   }
 
   uploadRepoBtn.addEventListener('click', uploadCurrentFileToRepo);
-  resetTokenBtn.addEventListener('click', () => {
-    localStorage.removeItem(GH_TOKEN_KEY);
-    alert('저장된 GitHub 토큰을 삭제했습니다. 다음 업로드 시 다시 입력하게 됩니다.');
-  });
 
   repoRefreshBtn.addEventListener('click', loadRepoFileList);
   repoDeviceFilter?.addEventListener('change', renderRepoFileList);
