@@ -242,6 +242,19 @@
   .repo-file-item.active .repo-file-size { color: #cfd9e8; }
   .repo-file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .repo-file-size { color: #9ca3af; font-size: 11.5px; white-space: nowrap; }
+
+  .repo-device-badge, .device-badge {
+    font-size: 10.5px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+    color: white;
+    background: #6b7280;
+  }
+  .device-mc { background: #1d4ed8; }
+  .device-sg { background: #0f9d58; }
+  .repo-file-item.active .repo-device-badge { filter: brightness(1.15); }
 </style>
 </head>
 <body>
@@ -408,15 +421,55 @@
   const repoRefreshBtn = document.getElementById('repoRefreshBtn');
 
   // ⚙️ 이 페이지가 속한 GitHub Pages 저장소 정보.
-  // 대부분의 경우 "owner.github.io" 형태의 사용자/조직 페이지 저장소를 그대로 사용하면 됩니다.
-  // 만약 별도 이름의 저장소(project repo)에서 호스팅한다면 REPO_NAME을 실제 저장소 이름으로 바꿔주세요.
+  // GitHub Pages는 크게 두 패턴이 있습니다:
+  //   1) 프로젝트 페이지: https://owner.github.io/REPO/... (리포 이름 = 첫 경로 세그먼트, 예: "mib")
+  //   2) 사용자/조직 페이지: https://owner.github.io/... (리포 이름 = "owner.github.io")
+  // 아래 resolveRepo()가 실제 API 호출로 어느 패턴인지 자동 판별합니다.
   const REPO_OWNER = location.hostname.split('.')[0] || '';
-  const REPO_NAME = REPO_OWNER ? `${REPO_OWNER}.github.io` : '';
+  const DEVICE_LABELS = { mc: 'Management Center', sg: 'Edge SWG' };
 
-  // 현재 페이지가 위치한 폴더 기준으로 /files 하위 경로를 계산 (리포 루트 기준 경로)
-  function repoFilesDir(){
-    let dir = location.pathname.replace(/\/[^/]*$/, '').replace(/^\//,'').replace(/\/$/,'');
-    return dir ? `${dir}/files` : 'files';
+  function deviceInfo(fileName){
+    const m = fileName.match(/^mibs[_-]([a-z0-9]+)[_-]/i);
+    if (!m) return null;
+    const code = m[1].toLowerCase();
+    return { code, label: DEVICE_LABELS[code] || code.toUpperCase() };
+  }
+
+  let repoInfo = null; // { repo, dir } — 성공한 후보가 여기 캐시됨
+
+  // 시도할 (repo, dir) 후보 목록을 순서대로 반환
+  function repoCandidates(){
+    const segments = location.pathname.split('/').filter(Boolean);
+    const projectRepo = segments[0] || '';
+    const projectDir = segments.slice(1, -1).concat('files').join('/') || 'files';
+    const userPagesRepo = `${REPO_OWNER}.github.io`;
+    const userPagesDir = segments.slice(0, -1).concat('files').join('/') || 'files';
+
+    const list = [];
+    if (projectRepo) list.push({ repo: projectRepo, dir: projectDir });
+    list.push({ repo: userPagesRepo, dir: userPagesDir });
+    return list;
+  }
+
+  // 후보들을 순서대로 실제 contents API에 시도해서 처음 성공하는 것을 사용
+  async function fetchRepoContents(){
+    if (repoInfo){
+      const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${repoInfo.repo}/contents/${repoInfo.dir}`, { headers: { 'Accept': 'application/vnd.github+json' } });
+      return { res, repo: repoInfo.repo, dir: repoInfo.dir };
+    }
+    const candidates = repoCandidates();
+    let lastRes = null, lastCandidate = null;
+    for (const c of candidates){
+      try{
+        const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${c.repo}/contents/${c.dir}`, { headers: { 'Accept': 'application/vnd.github+json' } });
+        lastRes = res; lastCandidate = c;
+        if (res.ok){
+          repoInfo = c;
+          return { res, repo: c.repo, dir: c.dir };
+        }
+      }catch(e){ /* 다음 후보 시도 */ }
+    }
+    return { res: lastRes, repo: lastCandidate?.repo || '', dir: lastCandidate?.dir || '' };
   }
 
   function logLine(text, cls){
@@ -470,6 +523,8 @@
     fileLog.innerHTML = '';
     exportBtn.disabled = true;
 
+    const zipDevice = deviceInfo(file.name);
+
     let zip;
     try{
       zip = await JSZip.loadAsync(file);
@@ -511,6 +566,7 @@
       }
       parsedCount++;
       logLine(`✓ ${name} — ${parsed.length}개 정의`, 'ok');
+      parsed.forEach(e => { e.device = zipDevice ? zipDevice.label : ''; e.deviceCode = zipDevice ? zipDevice.code : ''; });
       entries.push(...parsed);
     }
 
@@ -531,36 +587,39 @@
 
   // ---------- 저장소(/files) MIB zip 목록 ----------
   async function loadRepoFileList(){
-    if (!REPO_OWNER || !REPO_NAME){
+    if (!REPO_OWNER){
       repoFileList.innerHTML = `<div class="empty-state">저장소 정보를 확인할 수 없습니다.</div>`;
       return;
     }
     repoFileList.innerHTML = `<div class="empty-state">불러오는 중...</div>`;
-    const dir = repoFilesDir();
-    const api = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${dir}`;
     try{
-      const res = await fetch(api, { headers: { 'Accept': 'application/vnd.github+json' } });
-      if (!res.ok){
-        if (res.status === 404){
-          repoFileList.innerHTML = `<div class="empty-state">'${escHtml(dir)}' 폴더를 찾을 수 없습니다. 저장소에 해당 폴더와 MIB zip 파일을 올리면 여기에 표시됩니다.</div>`;
+      const { res, repo, dir } = await fetchRepoContents();
+      if (!res || !res.ok){
+        if (res && res.status === 404){
+          repoFileList.innerHTML = `<div class="empty-state">'${escHtml(repo)}/${escHtml(dir)}' 폴더를 찾을 수 없습니다. 저장소에 해당 폴더와 MIB zip 파일을 올리면 여기에 표시됩니다.</div>`;
         } else {
-          repoFileList.innerHTML = `<div class="empty-state">목록을 불러오지 못했습니다. (HTTP ${res.status})</div>`;
+          repoFileList.innerHTML = `<div class="empty-state">목록을 불러오지 못했습니다.${res ? ` (HTTP ${res.status})` : ''}</div>`;
         }
         return;
       }
       const data = await res.json();
       const zips = (Array.isArray(data) ? data : []).filter(it => it.type === 'file' && /\.zip$/i.test(it.name));
       if (zips.length === 0){
-        repoFileList.innerHTML = `<div class="empty-state">'${escHtml(dir)}' 폴더에 등록된 MIB 압축 파일이 없습니다.</div>`;
+        repoFileList.innerHTML = `<div class="empty-state">'${escHtml(repo)}/${escHtml(dir)}' 폴더에 등록된 MIB 압축 파일이 없습니다.</div>`;
         return;
       }
       zips.sort((a,b) => a.name.localeCompare(b.name));
-      repoFileList.innerHTML = zips.map(it => `
+      repoFileList.innerHTML = zips.map(it => {
+        const dev = deviceInfo(it.name);
+        const badge = dev ? `<span class="repo-device-badge device-${escHtml(dev.code)}">${escHtml(dev.label)}</span>` : '';
+        return `
         <div class="repo-file-item" data-url="${escHtml(it.download_url)}" data-name="${escHtml(it.name)}">
           <span class="repo-file-name">📄 ${escHtml(it.name)}</span>
+          ${badge}
           <span class="repo-file-size">${(it.size/1024).toFixed(1)} KB</span>
         </div>
-      `).join('');
+      `;
+      }).join('');
       repoFileList.querySelectorAll('.repo-file-item').forEach(el => {
         el.addEventListener('click', () => loadRepoFile(el));
       });
@@ -595,6 +654,7 @@
   function buildReport(){
     const files = [...new Set(allEntries.map(e => e.fileName))].sort();
     const modules = new Set(allEntries.map(e => e.moduleName));
+    const devices = [...new Set(allEntries.map(e => e.device).filter(Boolean))].sort();
 
     report.innerHTML = `
       <div class="section">
@@ -614,6 +674,7 @@
         <div class="toolbar-inner">
           <input type="text" id="searchInput" placeholder="이름, OID, SYNTAX, DESCRIPTION 검색...">
           <select id="fileFilter"><option value="">모든 파일</option>${files.map(f=>`<option value="${escHtml(f)}">${escHtml(f)}</option>`).join('')}</select>
+          ${devices.length ? `<select id="deviceFilter"><option value="">모든 장비</option>${devices.map(d=>`<option value="${escHtml(d)}">${escHtml(d)}</option>`).join('')}</select>` : ''}
           <select id="kindFilter">
             <option value="">모든 종류</option>
             <option value="OBJECT-TYPE">OBJECT-TYPE</option>
@@ -627,6 +688,7 @@
           <table>
             <thead>
               <tr>
+                ${devices.length ? '<th data-key="device">Device</th>' : ''}
                 <th data-key="fileName">File</th>
                 <th data-key="name">Name</th>
                 <th data-key="oidResolved">OID</th>
@@ -644,6 +706,7 @@
 
     document.getElementById('searchInput').addEventListener('input', renderTable);
     document.getElementById('fileFilter').addEventListener('change', renderTable);
+    document.getElementById('deviceFilter')?.addEventListener('change', renderTable);
     document.getElementById('kindFilter').addEventListener('change', renderTable);
     document.querySelectorAll('#tableWrap thead th[data-key]').forEach(th => {
       th.addEventListener('click', () => {
@@ -680,10 +743,13 @@
   function renderTable(){
     const q = document.getElementById('searchInput').value.trim().toLowerCase();
     const fFile = document.getElementById('fileFilter').value;
+    const fDevice = document.getElementById('deviceFilter')?.value || '';
     const fKind = document.getElementById('kindFilter').value;
+    const hasDeviceCol = !!document.getElementById('deviceFilter');
 
     filtered = allEntries.filter(e => {
       if (fFile && e.fileName !== fFile) return false;
+      if (fDevice && e.device !== fDevice) return false;
       if (fKind && e.kind !== fKind) return false;
       if (q){
         const hay = (e.name + ' ' + e.syntax + ' ' + e.description + ' ' + (e.oidResolved||'') + ' ' + e.moduleName).toLowerCase();
@@ -704,12 +770,13 @@
 
     const tbody = document.getElementById('tbody');
     if (filtered.length === 0){
-      tbody.innerHTML = `<tr><td colspan="7" class="empty-state">조건에 맞는 정의가 없습니다.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${hasDeviceCol ? 8 : 7}" class="empty-state">조건에 맞는 정의가 없습니다.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = filtered.map((e, i) => `
       <tr>
+        ${hasDeviceCol ? `<td>${e.device ? `<span class="device-badge device-${escHtml(e.deviceCode||'other')}">${escHtml(e.device)}</span>` : ''}</td>` : ''}
         <td class="file-cell">${escHtml(e.fileName)}</td>
         <td class="name-cell">${escHtml(e.name)}<span class="kind-tag">${escHtml(e.kind)}</span></td>
         <td class="oid-cell">${oidHtml(e)}</td>
@@ -735,8 +802,8 @@
 
   exportBtn.addEventListener('click', () => {
     if (filtered.length === 0) return;
-    const cols = ['fileName','moduleName','name','kind','oidResolved','oidRaw','syntax','access','status','description'];
-    const header = ['File','Module','Name','Kind','OID','OID (raw)','Syntax','Access','Status','Description'];
+    const cols = ['device','fileName','moduleName','name','kind','oidResolved','oidRaw','syntax','access','status','description'];
+    const header = ['Device','File','Module','Name','Kind','OID','OID (raw)','Syntax','Access','Status','Description'];
     const rows = [header].concat(filtered.map(e => cols.map(c => {
       let v = e[c] == null ? '' : String(e[c]);
       v = v.replace(/"/g,'""');
