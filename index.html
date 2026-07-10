@@ -250,6 +250,19 @@
   }
   .repo-refresh-btn:hover { background: rgba(255,255,255,0.15); border-radius: 6px; }
 
+  .repo-header-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .repo-device-filter {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.15);
+    color: white;
+    max-width: 120px;
+  }
+  .repo-device-filter option { color: #1e3a5f; }
+  .repo-device-filter.hidden { display: none; }
+
   .header-summary {
     display: flex;
     gap: 16px;
@@ -407,7 +420,12 @@
   <div class="section compact-panel">
     <div class="section-header with-action">
       <span>📦 저장소 MIB 목록 (/files)</span>
-      <button id="repoRefreshBtn" class="repo-refresh-btn" title="목록 새로고침">🔄</button>
+      <span class="repo-header-actions">
+        <select id="repoDeviceFilter" class="repo-device-filter hidden" title="장비별 필터">
+          <option value="">전체 장비</option>
+        </select>
+        <button id="repoRefreshBtn" class="repo-refresh-btn" title="목록 새로고침">🔄</button>
+      </span>
     </div>
     <div id="repoFileList" class="repo-file-list">
       <div class="empty-state">불러오는 중...</div>
@@ -723,6 +741,8 @@
   const report = document.getElementById('report');
   const repoFileList = document.getElementById('repoFileList');
   const repoRefreshBtn = document.getElementById('repoRefreshBtn');
+  const repoDeviceFilter = document.getElementById('repoDeviceFilter');
+  let repoZips = [];
 
   // ⚙️ 이 페이지가 속한 GitHub Pages 저장소 정보.
   // GitHub Pages는 크게 두 패턴이 있습니다:
@@ -895,6 +915,8 @@
   async function loadRepoFileList(){
     if (!REPO_OWNER){
       repoFileList.innerHTML = `<div class="empty-state">저장소 정보를 확인할 수 없습니다.</div>`;
+      repoZips = [];
+      populateRepoDeviceFilter(repoZips);
       return;
     }
     repoFileList.innerHTML = `<div class="empty-state">불러오는 중...</div>`;
@@ -906,40 +928,96 @@
         } else {
           repoFileList.innerHTML = `<div class="empty-state">목록을 불러오지 못했습니다.${res ? ` (HTTP ${res.status})` : ''}</div>`;
         }
+        repoZips = [];
+        populateRepoDeviceFilter(repoZips);
         return;
       }
       const data = await res.json();
       const zips = (Array.isArray(data) ? data : []).filter(it => it.type === 'file' && /\.zip$/i.test(it.name));
       if (zips.length === 0){
         repoFileList.innerHTML = `<div class="empty-state">'${escHtml(repo)}/${escHtml(dir)}' 폴더에 등록된 MIB 압축 파일이 없습니다.</div>`;
+        repoZips = [];
+        populateRepoDeviceFilter(repoZips);
         return;
       }
       zips.sort((a,b) => a.name.localeCompare(b.name));
-      repoFileList.innerHTML = zips.map(it => {
-        const dev = deviceInfo(it.name);
-        const badge = dev ? `<span class="repo-device-badge device-${escHtml(dev.code)}">${escHtml(dev.label)}</span>` : '';
-        const versionBadge = dev && dev.version ? `<span class="repo-version-badge">v${escHtml(dev.version)}</span>` : '';
-        return `
-        <div class="repo-file-item" data-url="${escHtml(it.download_url)}" data-name="${escHtml(it.name)}">
-          <span class="repo-file-name">📄 ${escHtml(it.name)}</span>
-          ${badge}${versionBadge}
-          <span class="repo-file-size">${(it.size/1024).toFixed(1)} KB</span>
-          <button type="button" class="repo-download-btn" data-url="${escHtml(it.download_url)}" data-name="${escHtml(it.name)}" title="다운로드">⬇</button>
-        </div>
-      `;
-      }).join('');
-      repoFileList.querySelectorAll('.repo-file-item').forEach(el => {
-        el.addEventListener('click', () => loadRepoFile(el));
-      });
-      repoFileList.querySelectorAll('.repo-download-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          downloadRepoFile(btn.getAttribute('data-url'), btn.getAttribute('data-name'), btn);
-        });
-      });
+      repoZips = zips;
+      populateRepoDeviceFilter(repoZips);
+      renderRepoFileList();
     }catch(err){
       repoFileList.innerHTML = `<div class="empty-state">목록을 불러오는 중 오류가 발생했습니다: ${escHtml(err.message)}</div>`;
     }
+  }
+
+  // 저장소 zip 목록에서 발견되는 장비 코드/이름 목록 (중복 제거)
+  function repoDeviceOptions(zips){
+    const map = new Map();
+    zips.forEach(it => {
+      const d = deviceInfo(it.name);
+      if (d) map.set(d.code, d.label);
+    });
+    return [...map.entries()].sort((a,b) => a[1].localeCompare(b[1]));
+  }
+
+  // 장비 필터 select의 옵션 목록을 최신 zip 목록 기준으로 채움
+  function populateRepoDeviceFilter(zips){
+    if (!repoDeviceFilter) return;
+    const current = repoDeviceFilter.value;
+    const opts = repoDeviceOptions(zips);
+    const hasUnknown = zips.some(it => !deviceInfo(it.name));
+    const shouldShow = (opts.length + (hasUnknown ? 1 : 0)) > 1;
+
+    repoDeviceFilter.innerHTML = '<option value="">전체 장비</option>'
+      + opts.map(([code, label]) => `<option value="${escHtml(code)}">${escHtml(label)}</option>`).join('')
+      + (hasUnknown ? '<option value="__none__">기타 (장비 미상)</option>' : '');
+
+    repoDeviceFilter.classList.toggle('hidden', !shouldShow);
+
+    if ([...repoDeviceFilter.options].some(o => o.value === current)){
+      repoDeviceFilter.value = current;
+    } else {
+      repoDeviceFilter.value = '';
+    }
+  }
+
+  // 현재 선택된 장비 필터를 반영하여 저장소 목록을 렌더링
+  function renderRepoFileList(){
+    const filterVal = repoDeviceFilter ? repoDeviceFilter.value : '';
+    let list = repoZips;
+    if (filterVal){
+      list = repoZips.filter(it => {
+        const d = deviceInfo(it.name);
+        return filterVal === '__none__' ? !d : (d && d.code === filterVal);
+      });
+    }
+
+    if (list.length === 0){
+      repoFileList.innerHTML = `<div class="empty-state">선택한 장비에 해당하는 MIB 파일이 없습니다.</div>`;
+      return;
+    }
+
+    repoFileList.innerHTML = list.map(it => {
+      const dev = deviceInfo(it.name);
+      const badge = dev ? `<span class="repo-device-badge device-${escHtml(dev.code)}">${escHtml(dev.label)}</span>` : '';
+      const versionBadge = dev && dev.version ? `<span class="repo-version-badge">v${escHtml(dev.version)}</span>` : '';
+      return `
+      <div class="repo-file-item" data-url="${escHtml(it.download_url)}" data-name="${escHtml(it.name)}">
+        <span class="repo-file-name">📄 ${escHtml(it.name)}</span>
+        ${badge}${versionBadge}
+        <span class="repo-file-size">${(it.size/1024).toFixed(1)} KB</span>
+        <button type="button" class="repo-download-btn" data-url="${escHtml(it.download_url)}" data-name="${escHtml(it.name)}" title="다운로드">⬇</button>
+      </div>
+    `;
+    }).join('');
+    repoFileList.querySelectorAll('.repo-file-item').forEach(el => {
+      el.addEventListener('click', () => loadRepoFile(el));
+    });
+    repoFileList.querySelectorAll('.repo-download-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        downloadRepoFile(btn.getAttribute('data-url'), btn.getAttribute('data-name'), btn);
+      });
+    });
   }
 
   async function downloadRepoFile(url, name, btn){
@@ -988,6 +1066,7 @@
   }
 
   repoRefreshBtn.addEventListener('click', loadRepoFileList);
+  repoDeviceFilter?.addEventListener('change', renderRepoFileList);
   loadRepoFileList();
 
   function buildReport(){
