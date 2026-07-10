@@ -137,14 +137,6 @@
     text-align: left;
   }
 
-  .summary-body {
-    padding: 8px 14px;
-    text-align: left;
-  }
-  .summary-stats { display: flex; gap: 22px; flex-wrap: wrap; }
-  .summary-stats .stat-num { font-size: 20px; font-weight: bold; color: #1e3a5f; display: block; line-height: 1.2; }
-  .summary-stats .stat-label { font-size: 11px; color: #6b7280; }
-
   /* ================= MIB Explorer 전용 스타일 ================= */
 
   .stat-row td { font-size: 13px; }
@@ -257,6 +249,17 @@
     margin: 0;
   }
   .repo-refresh-btn:hover { background: rgba(255,255,255,0.15); border-radius: 6px; }
+
+  .header-summary {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    font-weight: 400;
+    color: #cbd5e1;
+    white-space: nowrap;
+  }
+  .header-summary b { color: white; font-size: 13px; margin-right: 2px; }
+
   .repo-file-list {
     max-height: 130px;
     overflow-y: auto;
@@ -265,34 +268,64 @@
   .repo-file-item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 9px 12px;
-    border-radius: 8px;
+    gap: 6px;
+    padding: 7px 8px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     color: #1e3a5f;
   }
   .repo-file-item:hover { background: #eef2f9; }
   .repo-file-item.active { background: #1e3a5f; color: white; }
   .repo-file-item.active .repo-file-size { color: #cfd9e8; }
-  .repo-file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .repo-file-size { color: #9ca3af; font-size: 11.5px; white-space: nowrap; }
+  .repo-file-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .repo-file-size { flex: 0 0 auto; color: #9ca3af; font-size: 11px; white-space: nowrap; }
 
   .repo-device-badge, .device-badge {
-    font-size: 10.5px;
-    padding: 2px 8px;
+    flex: 0 0 auto;
+    font-size: 10px;
+    padding: 2px 7px;
     border-radius: 10px;
     font-weight: 700;
     white-space: nowrap;
     color: white;
     background: #6b7280;
   }
+  .repo-version-badge {
+    flex: 0 0 auto;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: #1e3a5f;
+    background: #e5e9f0;
+  }
+  .repo-file-item.active .repo-version-badge { background: rgba(255,255,255,0.25); color: white; }
   .device-mc { background: #1d4ed8; }
   .device-sg { background: #0f9d58; }
   .repo-file-item.active .repo-device-badge { filter: brightness(1.15); }
+
+  .repo-download-btn {
+    flex: 0 0 auto;
+    background: transparent;
+    border: 1px solid #cbd5e1;
+    color: #1e3a5f;
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+    padding: 0;
+    margin: 0;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .repo-download-btn:hover { background: #1e3a5f; color: white; }
+  .repo-file-item.active .repo-download-btn { border-color: rgba(255,255,255,0.5); color: white; }
+  .repo-file-item.active .repo-download-btn:hover { background: rgba(255,255,255,0.2); }
 </style>
 </head>
+
 <body>
 
 <!-- 공통 헤더 + 제목 + 버전 -->
@@ -302,7 +335,7 @@
 </script>
 <script src="https://etech-symantec.github.io/header.js"></script>
 
-<!-- 상단 1행: 수동 업로드(10%) / 저장소 목록 / 압축파일 내부 정보 / 업로드 요약 -->
+<!-- 상단 1행: 수동 업로드(10%) / 저장소 목록 / 압축파일 내부 정보 -->
 <div class="layout-row">
   <div class="section compact-panel upload-col">
     <div class="section-header">📂 업로드</div>
@@ -326,13 +359,6 @@
   <div class="section compact-panel">
     <div class="section-header">🗂️ 압축파일 내부 정보</div>
     <div class="file-log" id="fileLog">
-      <div class="empty-state">아직 불러온 MIB이 없습니다.</div>
-    </div>
-  </div>
-
-  <div class="section compact-panel">
-    <div class="section-header">① 업로드 요약</div>
-    <div id="summaryBody" class="summary-body">
       <div class="empty-state">아직 불러온 MIB이 없습니다.</div>
     </div>
   </div>
@@ -483,10 +509,12 @@
   const DEVICE_LABELS = { mc: 'Management Center', sg: 'Edge SWG' };
 
   function deviceInfo(fileName){
-    const m = fileName.match(/^mibs[_-]([a-z0-9]+)[_-]/i);
+    const base = fileName.replace(/\.zip$/i, '');
+    const m = base.match(/^mibs[_-]([a-z0-9]+)[_-](.+)$/i);
     if (!m) return null;
     const code = m[1].toLowerCase();
-    return { code, label: DEVICE_LABELS[code] || code.toUpperCase() };
+    const version = m[2] || '';
+    return { code, label: DEVICE_LABELS[code] || code.toUpperCase(), version };
   }
 
   let repoInfo = null; // { repo, dir } — 성공한 후보가 여기 캐시됨
@@ -620,7 +648,7 @@
       }
       parsedCount++;
       logLine(`✓ ${name} — ${parsed.length}개 정의`, 'ok');
-      parsed.forEach(e => { e.device = zipDevice ? zipDevice.label : ''; e.deviceCode = zipDevice ? zipDevice.code : ''; });
+      parsed.forEach(e => { e.device = zipDevice ? zipDevice.label : ''; e.deviceCode = zipDevice ? zipDevice.code : ''; e.deviceVersion = zipDevice ? zipDevice.version : ''; });
       entries.push(...parsed);
     }
 
@@ -666,19 +694,52 @@
       repoFileList.innerHTML = zips.map(it => {
         const dev = deviceInfo(it.name);
         const badge = dev ? `<span class="repo-device-badge device-${escHtml(dev.code)}">${escHtml(dev.label)}</span>` : '';
+        const versionBadge = dev && dev.version ? `<span class="repo-version-badge">v${escHtml(dev.version)}</span>` : '';
         return `
         <div class="repo-file-item" data-url="${escHtml(it.download_url)}" data-name="${escHtml(it.name)}">
           <span class="repo-file-name">📄 ${escHtml(it.name)}</span>
-          ${badge}
+          ${badge}${versionBadge}
           <span class="repo-file-size">${(it.size/1024).toFixed(1)} KB</span>
+          <button type="button" class="repo-download-btn" data-url="${escHtml(it.download_url)}" data-name="${escHtml(it.name)}" title="다운로드">⬇</button>
         </div>
       `;
       }).join('');
       repoFileList.querySelectorAll('.repo-file-item').forEach(el => {
         el.addEventListener('click', () => loadRepoFile(el));
       });
+      repoFileList.querySelectorAll('.repo-download-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          downloadRepoFile(btn.getAttribute('data-url'), btn.getAttribute('data-name'), btn);
+        });
+      });
     }catch(err){
       repoFileList.innerHTML = `<div class="empty-state">목록을 불러오는 중 오류가 발생했습니다: ${escHtml(err.message)}</div>`;
+    }
+  }
+
+  async function downloadRepoFile(url, name, btn){
+    const original = btn.textContent;
+    btn.textContent = '⏳';
+    btn.disabled = true;
+    try{
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    }catch(err){
+      fileMeta.textContent = `${name} 다운로드 실패: ${err.message}`;
+      fileMeta.style.color = '#b91c1c';
+    }finally{
+      btn.textContent = original;
+      btn.disabled = false;
     }
   }
 
@@ -710,17 +771,20 @@
     const modules = new Set(allEntries.map(e => e.moduleName));
     const devices = [...new Set(allEntries.map(e => e.device).filter(Boolean))].sort();
 
-    document.getElementById('summaryBody').innerHTML = `
-      <div class="summary-stats">
-        <div><span class="stat-num">${files.length}</span><span class="stat-label">files</span></div>
-        <div><span class="stat-num">${modules.size}</span><span class="stat-label">modules</span></div>
-        <div><span class="stat-num">${allEntries.length}</span><span class="stat-label">objects</span></div>
-      </div>
+    const headerSummary = `
+      <span class="header-summary">
+        <span><b>${files.length}</b> files</span>
+        <span><b>${modules.size}</b> modules</span>
+        <span><b>${allEntries.length}</b> objects</span>
+      </span>
     `;
 
     report.innerHTML = `
       <div class="section">
-        <div class="section-header">② OID 정의 목록</div>
+        <div class="section-header with-action">
+          <span>② OID 정의 목록</span>
+          ${headerSummary}
+        </div>
         <div class="toolbar-inner">
           <input type="text" id="searchInput" placeholder="이름, OID, SYNTAX, DESCRIPTION 검색...">
           <select id="fileFilter"><option value="">모든 파일</option>${files.map(f=>`<option value="${escHtml(f)}">${escHtml(f)}</option>`).join('')}</select>
@@ -852,8 +916,8 @@
 
   exportBtn.addEventListener('click', () => {
     if (filtered.length === 0) return;
-    const cols = ['device','fileName','moduleName','name','kind','oidResolved','oidRaw','syntax','access','status','description'];
-    const header = ['Device','File','Module','Name','Kind','OID','OID (raw)','Syntax','Access','Status','Description'];
+    const cols = ['device','deviceVersion','fileName','moduleName','name','kind','oidResolved','oidRaw','syntax','access','status','description'];
+    const header = ['Device','Version','File','Module','Name','Kind','OID','OID (raw)','Syntax','Access','Status','Description'];
     const rows = [header].concat(filtered.map(e => cols.map(c => {
       let v = e[c] == null ? '' : String(e[c]);
       v = v.replace(/"/g,'""');
