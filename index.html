@@ -323,6 +323,64 @@
   .repo-download-btn:hover { background: #1e3a5f; color: white; }
   .repo-file-item.active .repo-download-btn { border-color: rgba(255,255,255,0.5); color: white; }
   .repo-file-item.active .repo-download-btn:hover { background: rgba(255,255,255,0.2); }
+
+  /* ================= 즐겨찾기 ================= */
+  th.fav-col, td.fav-cell { width: 34px; text-align: center; padding: 6px 4px; }
+  .fav-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    margin: 0;
+    color: #cbd5e1;
+  }
+  .fav-btn.active { color: #f5a623; }
+  .fav-btn:hover { color: #f5a623; }
+
+  .fav-only-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12.5px;
+    color: #374151;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .fav-only-label input { cursor: pointer; }
+
+  #favTableWrap { overflow-x: auto; max-height: 300px; overflow-y: auto; }
+  #favTableWrap table th { position: sticky; top: 0; z-index: 1; }
+  .fav-remove-btn {
+    background: transparent;
+    border: 1px solid #cbd5e1;
+    color: #9ca3af;
+    width: 20px;
+    height: 20px;
+    line-height: 1;
+    padding: 0;
+    border-radius: 5px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .fav-remove-btn:hover { background: #f8d7da; color: #7a1f2b; border-color: #f8d7da; }
+
+  .fav-action-btn {
+    background: transparent;
+    border: none;
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 8px;
+    margin: 0;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .fav-action-btn:hover { background: rgba(255,255,255,0.15); }
+  .fav-action-bar { display: flex; gap: 4px; align-items: center; }
+  #favCopyStatus { font-size: 11px; color: #cbd5e1; margin-left: 4px; }
 </style>
 </head>
 
@@ -377,6 +435,8 @@
   </div>
 </div>
 
+<div id="favoritesSection"></div>
+
 <div id="report"></div>
 
 
@@ -410,6 +470,170 @@
   let allEntries = [];
   let filtered = [];
   let sortState = { key: null, dir: 1 };
+
+  // ---------- 즐겨찾기 (localStorage에 영구 저장) ----------
+  const FAV_STORAGE_KEY = 'mibExplorerFavorites';
+  let favorites = new Map(); // favKey -> 저장된 항목 스냅샷
+
+  function favKey(e){
+    return [e.moduleName || '', e.name, e.oidResolved || e.oidRaw || ''].join('||');
+  }
+
+  function loadFavorites(){
+    try{
+      const raw = localStorage.getItem(FAV_STORAGE_KEY);
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)){
+        arr.forEach(item => { if (item && item.key) favorites.set(item.key, item); });
+      }
+    }catch(err){ /* 손상된 데이터는 무시 */ }
+  }
+
+  function persistFavorites(){
+    try{
+      localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify([...favorites.values()]));
+    }catch(err){ /* 저장 공간 부족 등은 무시 */ }
+  }
+
+  function isFavorite(e){
+    return favorites.has(favKey(e));
+  }
+
+  function toggleFavorite(e){
+    const key = favKey(e);
+    if (favorites.has(key)){
+      favorites.delete(key);
+    } else {
+      favorites.set(key, {
+        key,
+        name: e.name,
+        moduleName: e.moduleName,
+        fileName: e.fileName,
+        kind: e.kind,
+        device: e.device || '',
+        oidResolved: e.oidResolved || '',
+        oidRaw: e.oidRaw || '',
+        syntax: e.syntax || '',
+        access: e.access || '',
+        status: e.status || '',
+        description: e.description || ''
+      });
+    }
+    persistFavorites();
+    renderFavoritesSection();
+    if (document.getElementById('tbody')) renderTable();
+  }
+
+  function formatOidDot(str){
+    if (!str) return '';
+    return str.startsWith('.') ? str : '.' + str;
+  }
+
+  function renderFavoritesSection(){
+    const favSection = document.getElementById('favoritesSection');
+    const list = [...favorites.values()].sort((a,b) => a.name.localeCompare(b.name));
+
+    if (list.length === 0){
+      favSection.innerHTML = `
+        <div class="section">
+          <div class="section-header">⭐ 즐겨찾기 OID 모음</div>
+          <div class="empty-state">아직 즐겨찾기한 OID가 없습니다. 아래 목록 표에서 ☆ 아이콘을 눌러 추가하세요.</div>
+        </div>
+      `;
+      return;
+    }
+
+    favSection.innerHTML = `
+      <div class="section">
+        <div class="section-header with-action">
+          <span>⭐ 즐겨찾기 OID 모음 (${list.length})</span>
+          <span class="fav-action-bar">
+            <button type="button" class="fav-action-btn" id="favCopyBtn">📋 OID 전체 복사</button>
+            <button type="button" class="fav-action-btn" id="favExportBtn">💾 CSV</button>
+            <button type="button" class="fav-action-btn" id="favClearBtn">🗑 전체 삭제</button>
+            <span id="favCopyStatus"></span>
+          </span>
+        </div>
+        <div id="favTableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>OID</th>
+                <th>File / Module</th>
+                <th>Syntax</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.map(item => `
+                <tr>
+                  <td class="name-cell">${escHtml(item.name)}<span class="kind-tag">${escHtml(item.kind || '')}</span></td>
+                  <td class="oid-cell">${item.oidResolved ? escHtml(formatOidDot(item.oidResolved)) : `<span class="oid unresolved">${escHtml(formatOidDot(item.oidRaw))}<span class="oid-raw">(부모 OID 미확인)</span></span>`}</td>
+                  <td class="file-cell">${escHtml(item.fileName || '')}${item.moduleName ? ' / ' + escHtml(item.moduleName) : ''}</td>
+                  <td class="syntax-cell">${escHtml(item.syntax || '')}</td>
+                  <td class="fav-cell"><button type="button" class="fav-remove-btn" data-key="${escHtml(item.key)}" title="즐겨찾기에서 제거">✕</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    favSection.querySelectorAll('.fav-remove-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        favorites.delete(btn.getAttribute('data-key'));
+        persistFavorites();
+        renderFavoritesSection();
+        if (document.getElementById('tbody')) renderTable();
+      });
+    });
+
+    document.getElementById('favCopyBtn').addEventListener('click', () => {
+      const text = list.map(item => formatOidDot(item.oidResolved || item.oidRaw)).join('\n');
+      const status = document.getElementById('favCopyStatus');
+      navigator.clipboard.writeText(text).then(() => {
+        status.textContent = '복사됨!';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+      }).catch(() => {
+        status.textContent = '복사 실패';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+      });
+    });
+
+    document.getElementById('favExportBtn').addEventListener('click', () => {
+      const cols = ['device','fileName','moduleName','name','kind','oidResolved','oidRaw','syntax','access','status','description'];
+      const header = ['Device','File','Module','Name','Kind','OID','OID (raw)','Syntax','Access','Status','Description'];
+      const rows = [header].concat(list.map(item => cols.map(c => {
+        let v = item[c] == null ? '' : String(item[c]);
+        if (c === 'oidResolved' && v) v = formatOidDot(v);
+        v = v.replace(/"/g,'""');
+        return `"${v}"`;
+      })));
+      const csv = '\uFEFF' + rows.map(r => r.join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mib-favorites.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('favClearBtn').addEventListener('click', () => {
+      if (!confirm('즐겨찾기한 OID를 모두 삭제할까요?')) return;
+      favorites.clear();
+      persistFavorites();
+      renderFavoritesSection();
+      if (document.getElementById('tbody')) renderTable();
+    });
+  }
+
+  loadFavorites();
+  renderFavoritesSection();
+
 
   // ---------- MIB text parsing ----------
   function parseMib(text, fileName){
@@ -797,11 +1021,13 @@
             <option value="NOTIFICATION-TYPE">NOTIFICATION-TYPE</option>
             <option value="TRAP-TYPE">TRAP-TYPE</option>
           </select>
+          <label class="fav-only-label"><input type="checkbox" id="favOnlyFilter"> ⭐ 즐겨찾기만</label>
         </div>
         <div id="tableWrap">
           <table>
             <thead>
               <tr>
+                <th class="fav-col"></th>
                 ${devices.length ? '<th data-key="device">Device</th>' : ''}
                 <th data-key="fileName">File</th>
                 <th data-key="name">Name</th>
@@ -822,6 +1048,7 @@
     document.getElementById('fileFilter').addEventListener('change', renderTable);
     document.getElementById('deviceFilter')?.addEventListener('change', renderTable);
     document.getElementById('kindFilter').addEventListener('change', renderTable);
+    document.getElementById('favOnlyFilter').addEventListener('change', renderTable);
     document.querySelectorAll('#tableWrap thead th[data-key]').forEach(th => {
       th.addEventListener('click', () => {
         const key = th.getAttribute('data-key');
@@ -841,13 +1068,13 @@
 
   function oidHtml(e){
     if (!e.oidResolved){
-      return `<span class="oid unresolved">${escHtml(e.oidParent)}.${e.oidSubIds.join('.')}<span class="oid-raw">(부모 OID 미확인)</span></span>`;
+      return `<span class="oid unresolved">.${escHtml(e.oidParent)}.${e.oidSubIds.join('.')}<span class="oid-raw">(부모 OID 미확인)</span></span>`;
     }
     const parts = e.oidResolved.split('.');
     const tailCount = Math.min(2, e.oidSubIds.length || 1);
     const baseParts = parts.slice(0, parts.length - tailCount);
     const tailParts = parts.slice(parts.length - tailCount);
-    const baseStr = baseParts.length ? baseParts.join('.') + '.' : '';
+    const baseStr = '.' + (baseParts.length ? baseParts.join('.') + '.' : '');
     return `<span class="oid"><span class="base">${escHtml(baseStr)}</span><span class="tail">${escHtml(tailParts.join('.'))}</span></span>`;
   }
 
@@ -859,12 +1086,14 @@
     const fFile = document.getElementById('fileFilter').value;
     const fDevice = document.getElementById('deviceFilter')?.value || '';
     const fKind = document.getElementById('kindFilter').value;
+    const favOnly = document.getElementById('favOnlyFilter')?.checked || false;
     const hasDeviceCol = !!document.getElementById('deviceFilter');
 
     filtered = allEntries.filter(e => {
       if (fFile && e.fileName !== fFile) return false;
       if (fDevice && e.device !== fDevice) return false;
       if (fKind && e.kind !== fKind) return false;
+      if (favOnly && !isFavorite(e)) return false;
       if (q){
         const hay = (e.name + ' ' + e.syntax + ' ' + e.description + ' ' + (e.oidResolved||'') + ' ' + e.moduleName).toLowerCase();
         if (!hay.includes(q)) return false;
@@ -884,12 +1113,13 @@
 
     const tbody = document.getElementById('tbody');
     if (filtered.length === 0){
-      tbody.innerHTML = `<tr><td colspan="${hasDeviceCol ? 8 : 7}" class="empty-state">조건에 맞는 정의가 없습니다.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${hasDeviceCol ? 9 : 8}" class="empty-state">조건에 맞는 정의가 없습니다.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = filtered.map((e, i) => `
       <tr>
+        <td class="fav-cell"><button type="button" class="fav-btn ${isFavorite(e) ? 'active' : ''}" data-idx="${i}" title="즐겨찾기">${isFavorite(e) ? '★' : '☆'}</button></td>
         ${hasDeviceCol ? `<td>${e.device ? `<span class="device-badge device-${escHtml(e.deviceCode||'other')}">${escHtml(e.device)}</span>` : ''}</td>` : ''}
         <td class="file-cell">${escHtml(e.fileName)}</td>
         <td class="name-cell">${escHtml(e.name)}<span class="kind-tag">${escHtml(e.kind)}</span></td>
@@ -912,6 +1142,13 @@
         el.textContent = span.classList.contains('expanded') ? '접기' : '더 보기';
       });
     });
+
+    tbody.querySelectorAll('.fav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-idx'));
+        toggleFavorite(filtered[idx]);
+      });
+    });
   }
 
   exportBtn.addEventListener('click', () => {
@@ -920,6 +1157,7 @@
     const header = ['Device','Version','File','Module','Name','Kind','OID','OID (raw)','Syntax','Access','Status','Description'];
     const rows = [header].concat(filtered.map(e => cols.map(c => {
       let v = e[c] == null ? '' : String(e[c]);
+      if (c === 'oidResolved' && v) v = formatOidDot(v);
       v = v.replace(/"/g,'""');
       return `"${v}"`;
     })));
