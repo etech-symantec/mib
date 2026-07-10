@@ -572,23 +572,9 @@
     // 현재 선택된(불러온) MIB에 동일한 OID가 있는 즐겨찾기만 표시
     const list = hasMib ? allFavs.filter(item => oidSet.has(item.oidResolved || item.oidRaw)) : [];
 
-    if (!hasMib){
-      favSection.innerHTML = `
-        <div class="section">
-          <div class="section-header">⭐ 즐겨찾기 OID 모음</div>
-          <div class="empty-state">MIB을 불러오면, 즐겨찾기한 ${allFavs.length}개 중 현재 불러온 MIB에 있는 OID만 여기에 표시됩니다.</div>
-        </div>
-      `;
-      return;
-    }
-
+    // 보여줄 항목이 없으면(즐겨찾기가 없거나, 현재 MIB과 일치하는 게 없으면) 카드 자체를 숨김
     if (list.length === 0){
-      favSection.innerHTML = `
-        <div class="section">
-          <div class="section-header">⭐ 즐겨찾기 OID 모음</div>
-          <div class="empty-state">현재 불러온 MIB에는 즐겨찾기한 OID(전체 ${allFavs.length}개)와 일치하는 항목이 없습니다.</div>
-        </div>
-      `;
+      favSection.innerHTML = '';
       return;
     }
 
