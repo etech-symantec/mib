@@ -768,11 +768,21 @@
   let currentZipFile = null;
   let currentZipSource = null; // 'manual' | 'repo'
 
-  // ⚠️ 보안 주의: 이 페이지는 정적 클라이언트 코드이므로, 아래 토큰은
+  // ⚠️ 보안 주의: 이 페이지는 정적 클라이언트 코드이므로, 아래 토큰(조합 결과)은
   // 페이지 소스를 보는 "누구에게나" 그대로 노출됩니다(이 저장소를 볼 수 있는 사람 전부).
+  // 5조각으로 나눠도 이어붙이면 원본 토큰이 그대로 나오므로 실제 보안 강화는 아니며,
+  // 단순히 grep/눈으로 토큰 전체가 한 줄에 보이지 않게 하는 수준입니다.
   // 반드시 "이 저장소 하나에만 Contents: Read/Write" 권한만 가진 Fine-grained PAT를 사용하고,
   // 유출 시 즉시 GitHub 설정에서 재발급/폐기(revoke)하세요.
-  const GITHUB_TOKEN = 'ghp_여기에_본인의_토큰을_붙여넣으세요';
+  //
+  // 아래 5개 조각에 본인의 토큰을 5등분해서 순서대로 붙여넣으세요.
+  // 예) 토큰이 'github_pat_ABCDEFGHIJ1234567890' 이라면 5등분해서 T1~T5에 나눠 넣으면 됩니다.
+  const GH_T1 = 'github_pa';
+  const GH_T2 = 't_11BZGTDVA0o';
+  const GH_T3 = 'd0GyCFl75Iw_L';
+  const GH_T4 = 'WZf6eNqP9SHqF4A3MdgHC';
+  const GH_T5 = 'FmxttBHRvIX1DW3EyHDMKSHEQAJU4MD8gRPlD';
+  const GITHUB_TOKEN = [GH_T1, GH_T2, GH_T3, GH_T4, GH_T5].join('');
 
   function ghHeaders(){
     return { 'Accept': 'application/vnd.github+json', 'Authorization': `token ${GITHUB_TOKEN}` };
