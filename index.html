@@ -229,6 +229,7 @@
   td.desc-cell .desc-text.translating { color: #9ca3af; font-style: italic; }
   td.desc-cell .desc-text.translating::after { content: ' (번역 중...)'; font-size: 10.5px; }
   td.desc-cell .desc-text.translated { color: #1e3a5f; }
+  td.desc-cell .desc-text[data-desc]:hover { text-decoration: underline dotted; text-decoration-color: #9ca3af; }
   td.desc-cell .toggle { color: #2563eb; font-size: 11px; cursor: pointer; }
 
   .empty-state {
@@ -915,48 +916,37 @@
     }
   }
 
-  let translateQueueActive = 0;
-  const TRANSLATE_CONCURRENCY = 4;
-  const translatePending = [];
+  // 설명(description) 클릭 시 해당 항목만 번역/원문 토글
+  async function toggleDescTranslate(span){
+    const text = span.getAttribute('data-desc');
+    if (!text) return;
 
-  function queueTranslate(span, text){
-    translatePending.push({ span, text });
-    pumpTranslateQueue();
-  }
-
-  function pumpTranslateQueue(){
-    while (translateQueueActive < TRANSLATE_CONCURRENCY && translatePending.length){
-      const job = translatePending.shift();
-      translateQueueActive++;
-      translateToKo(job.text).then(translated => {
-        translateQueueActive--;
-        if (translated && document.body.contains(job.span)){
-          job.span.textContent = translated;
-          job.span.classList.remove('translating');
-          job.span.classList.add('translated');
-          job.span.title = job.text; // 원문은 툴팁으로 확인
-        } else if (document.body.contains(job.span)){
-          job.span.classList.remove('translating');
-        }
-        pumpTranslateQueue();
-      });
+    if (span.classList.contains('translated')){
+      // 번역된 상태 -> 원문으로 복귀
+      span.textContent = text;
+      span.classList.remove('translated');
+      span.removeAttribute('title');
+      return;
     }
-  }
 
-  function translateVisibleDescriptions(tbody){
-    tbody.querySelectorAll('.desc-text[data-orig="1"]').forEach(span => {
-      const idx = span.getAttribute('data-idx');
-      const text = span.getAttribute('data-desc');
-      if (!text) return;
-      if (translateCache.has(text)){
-        span.textContent = translateCache.get(text);
-        span.classList.add('translated');
-        span.title = text;
-      } else {
-        span.classList.add('translating');
-        queueTranslate(span, text);
-      }
-    });
+    if (span.classList.contains('translating')) return; // 이미 요청 중
+
+    const cached = translateCache.get(text);
+    if (cached){
+      span.textContent = cached;
+      span.classList.add('translated');
+      span.title = '클릭하면 원문으로 돌아갑니다';
+      return;
+    }
+
+    span.classList.add('translating');
+    const translated = await translateToKo(text);
+    span.classList.remove('translating');
+    if (translated){
+      span.textContent = translated;
+      span.classList.add('translated');
+      span.title = '클릭하면 원문으로 돌아갑니다';
+    }
   }
 
   // ---------- drag & drop (동일 패턴) ----------
@@ -1338,7 +1328,6 @@
             <option value="TRAP-TYPE">TRAP-TYPE</option>
           </select>
           <label class="fav-only-label"><input type="checkbox" id="favOnlyFilter"> ⭐ 즐겨찾기만</label>
-          <label class="fav-only-label"><input type="checkbox" id="translateFilter"> 🌐 설명 한국어 자동번역</label>
         </div>
         <div id="tableWrap">
           <table>
@@ -1366,7 +1355,6 @@
     document.getElementById('deviceFilter')?.addEventListener('change', renderTable);
     document.getElementById('kindFilter').addEventListener('change', renderTable);
     document.getElementById('favOnlyFilter').addEventListener('change', renderTable);
-    document.getElementById('translateFilter').addEventListener('change', renderTable);
     document.querySelectorAll('#tableWrap thead th[data-key]').forEach(th => {
       th.addEventListener('click', () => {
         const key = th.getAttribute('data-key');
@@ -1435,8 +1423,6 @@
       return;
     }
 
-    const translateOn = document.getElementById('translateFilter')?.checked || false;
-
     tbody.innerHTML = filtered.map((e, i) => `
       <tr>
         <td class="fav-cell"><button type="button" class="fav-btn ${isFavorite(e) ? 'active' : ''}" data-idx="${i}" title="즐겨찾기">${isFavorite(e) ? '★' : '☆'}</button></td>
@@ -1448,15 +1434,11 @@
         <td>${e.access ? `<span class="access-badge ${accessClass(e.access)}">${escHtml(e.access)}</span>` : ''}</td>
         <td>${e.status ? `<span class="status-badge ${statusClass(e.status)}">${escHtml(e.status)}</span>` : ''}</td>
         <td class="desc-cell">
-          <span class="desc-text" data-idx="${i}"${translateOn && e.description ? ` data-orig="1" data-desc="${escHtml(e.description)}"` : ''}>${escHtml(e.description) || '—'}</span>
+          <span class="desc-text" data-idx="${i}"${e.description ? ` data-desc="${escHtml(e.description)}" title="클릭하면 한국어로 번역됩니다"` : ''}>${escHtml(e.description) || '—'}</span>
           ${e.description && e.description.length > 140 ? '<span class="toggle" data-idx="'+i+'">더 보기</span>' : ''}
         </td>
       </tr>
     `).join('');
-
-    if (translateOn){
-      translateVisibleDescriptions(tbody);
-    }
 
     tbody.querySelectorAll('.toggle').forEach(el => {
       el.addEventListener('click', () => {
@@ -1465,6 +1447,10 @@
         span.classList.toggle('expanded');
         el.textContent = span.classList.contains('expanded') ? '접기' : '더 보기';
       });
+    });
+
+    tbody.querySelectorAll('.desc-text[data-desc]').forEach(span => {
+      span.addEventListener('click', () => toggleDescTranslate(span));
     });
 
     tbody.querySelectorAll('.fav-btn').forEach(btn => {
