@@ -563,12 +563,7 @@
     const allFavs = [...favorites.values()].sort((a,b) => a.name.localeCompare(b.name));
 
     if (allFavs.length === 0){
-      favSection.innerHTML = `
-        <div class="section">
-          <div class="section-header">⭐ 즐겨찾기 OID 모음</div>
-          <div class="empty-state">아직 즐겨찾기한 OID가 없습니다. 아래 목록 표에서 ☆ 아이콘을 눌러 추가하세요.</div>
-        </div>
-      `;
+      favSection.innerHTML = '';
       return;
     }
 
