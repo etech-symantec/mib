@@ -548,11 +548,21 @@
     return str.startsWith('.') ? str : '.' + str;
   }
 
+  // 현재 불러온(선택된) MIB의 OID 값 집합
+  function currentOidSet(){
+    const set = new Set();
+    allEntries.forEach(e => {
+      const oid = e.oidResolved || e.oidRaw;
+      if (oid) set.add(oid);
+    });
+    return set;
+  }
+
   function renderFavoritesSection(){
     const favSection = document.getElementById('favoritesSection');
-    const list = [...favorites.values()].sort((a,b) => a.name.localeCompare(b.name));
+    const allFavs = [...favorites.values()].sort((a,b) => a.name.localeCompare(b.name));
 
-    if (list.length === 0){
+    if (allFavs.length === 0){
       favSection.innerHTML = `
         <div class="section">
           <div class="section-header">⭐ 즐겨찾기 OID 모음</div>
@@ -562,10 +572,35 @@
       return;
     }
 
+    const hasMib = allEntries.length > 0;
+    const oidSet = currentOidSet();
+    // 현재 선택된(불러온) MIB에 동일한 OID가 있는 즐겨찾기만 표시
+    const list = hasMib ? allFavs.filter(item => oidSet.has(item.oidResolved || item.oidRaw)) : [];
+
+    if (!hasMib){
+      favSection.innerHTML = `
+        <div class="section">
+          <div class="section-header">⭐ 즐겨찾기 OID 모음</div>
+          <div class="empty-state">MIB을 불러오면, 즐겨찾기한 ${allFavs.length}개 중 현재 불러온 MIB에 있는 OID만 여기에 표시됩니다.</div>
+        </div>
+      `;
+      return;
+    }
+
+    if (list.length === 0){
+      favSection.innerHTML = `
+        <div class="section">
+          <div class="section-header">⭐ 즐겨찾기 OID 모음</div>
+          <div class="empty-state">현재 불러온 MIB에는 즐겨찾기한 OID(전체 ${allFavs.length}개)와 일치하는 항목이 없습니다.</div>
+        </div>
+      `;
+      return;
+    }
+
     favSection.innerHTML = `
       <div class="section">
         <div class="section-header with-action">
-          <span>⭐ 즐겨찾기 OID 모음 (${list.length})</span>
+          <span>⭐ 즐겨찾기 OID 모음 (${list.length}/${allFavs.length})</span>
           <span class="fav-action-bar">
             <button type="button" class="fav-action-btn" id="favCopyBtn">📋 OID 전체 복사</button>
             <button type="button" class="fav-action-btn" id="favExportBtn">💾 CSV</button>
@@ -909,6 +944,7 @@
     exportBtn.disabled = false;
 
     buildReport();
+    renderFavoritesSection();
   }
 
   // ---------- 저장소(/files) MIB zip 목록 ----------
