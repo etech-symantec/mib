@@ -226,6 +226,9 @@
   td.desc-cell { max-width: 320px; text-align: left; font-size: 12.5px; color: #374151; }
   td.desc-cell .desc-text { display: block; max-height: 2.9em; overflow: hidden; cursor: pointer; }
   td.desc-cell .desc-text.expanded { max-height: none; }
+  td.desc-cell .desc-text.translating { color: #9ca3af; font-style: italic; }
+  td.desc-cell .desc-text.translating::after { content: ' (번역 중...)'; font-size: 10.5px; }
+  td.desc-cell .desc-text.translated { color: #1e3a5f; }
   td.desc-cell .toggle { color: #2563eb; font-size: 11px; cursor: pointer; }
 
   .empty-state {
@@ -879,6 +882,83 @@
       : escHtml(fileName);
   }
 
+  // ---------- 설명(Description) 자동 번역 (Google Translate 비공식 엔드포인트) ----------
+  const TRANSLATE_CACHE_KEY = 'mibDescTranslateCacheKo';
+  let translateCache = new Map();
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRANSLATE_CACHE_KEY) || '{}');
+    translateCache = new Map(Object.entries(saved));
+  } catch(e){ translateCache = new Map(); }
+
+  function persistTranslateCache(){
+    try {
+      const obj = {};
+      translateCache.forEach((v,k) => { obj[k] = v; });
+      localStorage.setItem(TRANSLATE_CACHE_KEY, JSON.stringify(obj));
+    } catch(e){ /* 저장 실패는 무시 (용량 초과 등) */ }
+  }
+
+  async function translateToKo(text){
+    if (!text) return '';
+    if (translateCache.has(text)) return translateCache.get(text);
+    try {
+      const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=' + encodeURIComponent(text);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const translated = (data[0] || []).map(chunk => chunk[0]).join('');
+      translateCache.set(text, translated);
+      persistTranslateCache();
+      return translated;
+    } catch(e){
+      return null; // 실패 시 null -> 원문 유지
+    }
+  }
+
+  let translateQueueActive = 0;
+  const TRANSLATE_CONCURRENCY = 4;
+  const translatePending = [];
+
+  function queueTranslate(span, text){
+    translatePending.push({ span, text });
+    pumpTranslateQueue();
+  }
+
+  function pumpTranslateQueue(){
+    while (translateQueueActive < TRANSLATE_CONCURRENCY && translatePending.length){
+      const job = translatePending.shift();
+      translateQueueActive++;
+      translateToKo(job.text).then(translated => {
+        translateQueueActive--;
+        if (translated && document.body.contains(job.span)){
+          job.span.textContent = translated;
+          job.span.classList.remove('translating');
+          job.span.classList.add('translated');
+          job.span.title = job.text; // 원문은 툴팁으로 확인
+        } else if (document.body.contains(job.span)){
+          job.span.classList.remove('translating');
+        }
+        pumpTranslateQueue();
+      });
+    }
+  }
+
+  function translateVisibleDescriptions(tbody){
+    tbody.querySelectorAll('.desc-text[data-orig="1"]').forEach(span => {
+      const idx = span.getAttribute('data-idx');
+      const text = span.getAttribute('data-desc');
+      if (!text) return;
+      if (translateCache.has(text)){
+        span.textContent = translateCache.get(text);
+        span.classList.add('translated');
+        span.title = text;
+      } else {
+        span.classList.add('translating');
+        queueTranslate(span, text);
+      }
+    });
+  }
+
   // ---------- drag & drop (동일 패턴) ----------
   ["dragenter", "dragover"].forEach(eventName => {
     dropZone.addEventListener(eventName, (e) => {
@@ -1258,6 +1338,7 @@
             <option value="TRAP-TYPE">TRAP-TYPE</option>
           </select>
           <label class="fav-only-label"><input type="checkbox" id="favOnlyFilter"> ⭐ 즐겨찾기만</label>
+          <label class="fav-only-label"><input type="checkbox" id="translateFilter"> 🌐 설명 한국어 자동번역</label>
         </div>
         <div id="tableWrap">
           <table>
@@ -1285,6 +1366,7 @@
     document.getElementById('deviceFilter')?.addEventListener('change', renderTable);
     document.getElementById('kindFilter').addEventListener('change', renderTable);
     document.getElementById('favOnlyFilter').addEventListener('change', renderTable);
+    document.getElementById('translateFilter').addEventListener('change', renderTable);
     document.querySelectorAll('#tableWrap thead th[data-key]').forEach(th => {
       th.addEventListener('click', () => {
         const key = th.getAttribute('data-key');
@@ -1353,6 +1435,8 @@
       return;
     }
 
+    const translateOn = document.getElementById('translateFilter')?.checked || false;
+
     tbody.innerHTML = filtered.map((e, i) => `
       <tr>
         <td class="fav-cell"><button type="button" class="fav-btn ${isFavorite(e) ? 'active' : ''}" data-idx="${i}" title="즐겨찾기">${isFavorite(e) ? '★' : '☆'}</button></td>
@@ -1364,11 +1448,15 @@
         <td>${e.access ? `<span class="access-badge ${accessClass(e.access)}">${escHtml(e.access)}</span>` : ''}</td>
         <td>${e.status ? `<span class="status-badge ${statusClass(e.status)}">${escHtml(e.status)}</span>` : ''}</td>
         <td class="desc-cell">
-          <span class="desc-text" data-idx="${i}">${escHtml(e.description) || '—'}</span>
+          <span class="desc-text" data-idx="${i}"${translateOn && e.description ? ` data-orig="1" data-desc="${escHtml(e.description)}"` : ''}>${escHtml(e.description) || '—'}</span>
           ${e.description && e.description.length > 140 ? '<span class="toggle" data-idx="'+i+'">더 보기</span>' : ''}
         </td>
       </tr>
     `).join('');
+
+    if (translateOn){
+      translateVisibleDescriptions(tbody);
+    }
 
     tbody.querySelectorAll('.toggle').forEach(el => {
       el.addEventListener('click', () => {
